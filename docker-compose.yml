@@ -1,0 +1,22 @@
+services:
+  stanmore2:
+    build: .
+    # BlueZ talks to the host bluetooth stack over D-Bus, so the container needs
+    # host networking and access to the system bus.
+    network_mode: host
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    cap_add:
+      - NET_ADMIN
+    environment:
+      BLE_ADDRESS: "${BLE_ADDRESS}"
+      MQTT_HOSTNAME: "${MQTT_HOSTNAME:-127.0.0.1}"
+      MQTT_PORT: "${MQTT_PORT:-1883}"
+      MQTT_USERNAME: "${MQTT_USERNAME:-}"
+      MQTT_PASSWORD: "${MQTT_PASSWORD:-}"
+      MQTT_TOPIC_PREFIX: "${MQTT_TOPIC_PREFIX:-stanmore2}"
+      MQTT_RETAIN: "${MQTT_RETAIN:-1}"
+      ALLOW_PAIRING: "${ALLOW_PAIRING:-0}"
+      HA_DISCOVERY_PREFIX: "${HA_DISCOVERY_PREFIX:-homeassistant}"
+      HA_DISCOVERY_ENABLED: "${HA_DISCOVERY_ENABLED:-1}"
+    restart: unless-stopped

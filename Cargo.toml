@@ -1,0 +1,23 @@
+[package]
+name = "marshall-stanmore-2"
+version = "0.1.0"
+edition = "2021"
+description = "MQTT/BLE control for a Marshall Stanmore II speaker with Home Assistant MQTT discovery"
+readme = "README.md"
+
+[[bin]]
+name = "stanmore2"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+btleplug = "0.11"
+rumqttc = "0.24"
+futures = "0.3"
+uuid = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "1"
