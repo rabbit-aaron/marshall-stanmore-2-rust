@@ -8,6 +8,155 @@ exposes its controls and status over MQTT, and on startup publishes Home
 Assistant discovery configs so the speaker shows up automatically as a device
 with all its entities.
 
+## Running on a Raspberry Pi (Raspbian)
+
+The Pi's onboard Bluetooth talks to the speaker over BLE, and the bridge talks to
+your MQTT broker over the network. These steps assume Raspberry Pi OS / Raspbian.
+
+### 1. Find the speaker's BLE address
+
+Make sure Bluetooth is up, then scan with `bluetoothctl`:
+
+```bash
+sudo rfkill unblock bluetooth
+sudo systemctl enable --now bluetooth
+
+bluetoothctl
+[bluetooth]# scan on
+# ...wait until a line with "STANMORE II" appears, e.g.
+# [NEW] Device 54:B7:E5:A2:CA:41 STANMORE II
+[bluetooth]# scan off
+[bluetooth]# exit
+```
+
+The `54:B7:E5:A2:CA:41`-style MAC on the `STANMORE II` line is your
+`BLE_ADDRESS`. (The speaker must be powered on and not already connected to a
+phone.)
+
+### 2. Download and install the binary
+
+The releases publish a prebuilt `aarch64-unknown-linux-gnu` binary, so there's
+nothing to compile. Install its one runtime dependency, then download and unpack
+it into `/usr/local/bin`:
+
+```bash
+sudo apt update
+sudo apt install -y libdbus-1-3 curl
+
+VERSION=0.1.0
+TARGET=aarch64-unknown-linux-gnu
+curl -fsSL "https://github.com/rabbit-aaron/marshall-stanmore-2-rust/releases/download/v${VERSION}/stanmore2-v${VERSION}-${TARGET}.tar.gz" \
+  | tar xz
+sudo install -Dm755 "stanmore2-v${VERSION}-${TARGET}/stanmore2" /usr/local/bin/stanmore2
+```
+
+> The binary is 64-bit (aarch64), so this needs 64-bit Raspberry Pi OS. Check
+> with `uname -m` — it should print `aarch64`. On a 32-bit OS, install Rust and
+> build from source instead (`cargo build --release`).
+
+### 3. Run it in the background with systemd
+
+Put your settings (including secrets) in an environment file. Keep it readable
+only by root since it holds the MQTT password:
+
+```bash
+sudo tee /etc/stanmore2.env >/dev/null <<'EOF'
+BLE_ADDRESS=54:B7:E5:A2:CA:41
+MQTT_HOSTNAME=192.168.1.10
+MQTT_USERNAME=myuser
+MQTT_PASSWORD=mypassword
+EOF
+sudo chmod 600 /etc/stanmore2.env
+```
+
+Create the service unit at `/etc/systemd/system/stanmore2.service`:
+
+```ini
+[Unit]
+Description=Marshall Stanmore II MQTT bridge
+Wants=network-online.target
+After=network-online.target bluetooth.target
+
+[Service]
+EnvironmentFile=/etc/stanmore2.env
+ExecStart=/usr/local/bin/stanmore2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start it, then watch the logs:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now stanmore2
+journalctl -u stanmore2 -f
+```
+
+On a BLE disconnect the process exits and systemd restarts it (5 s later), so it
+reconnects on its own.
+
+## Running with Docker
+
+Prefer containers? A tiny `debian-slim` image that just downloads the prebuilt
+release binary is enough — no Rust toolchain, no compiling. At runtime it only
+needs `libdbus-1-3` to talk to the host's BlueZ over D-Bus. Drop these two files
+in the repo root.
+
+`Dockerfile`:
+
+```dockerfile
+FROM debian:bookworm-slim
+
+ARG VERSION=0.1.0
+ARG TARGET=aarch64-unknown-linux-gnu
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl libdbus-1-3 \
+    && curl -fsSL "https://github.com/rabbit-aaron/marshall-stanmore-2-rust/releases/download/v${VERSION}/stanmore2-v${VERSION}-${TARGET}.tar.gz" \
+        | tar xz --strip-components=1 -C /usr/local/bin "stanmore2-v${VERSION}-${TARGET}/stanmore2" \
+    && apt-get purge -y curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["stanmore2"]
+```
+
+The release binary is `aarch64-unknown-linux-gnu`, so build this image on the Pi
+(or any arm64 host). Bump `VERSION` to pull a newer release.
+
+`docker-compose.yml`:
+
+```yaml
+services:
+  stanmore2:
+    build: .
+    # BlueZ uses the host Bluetooth stack over D-Bus, so the container needs
+    # host networking and the system bus socket.
+    network_mode: host
+    volumes:
+      - /var/run/dbus:/var/run/dbus
+    cap_add:
+      - NET_ADMIN
+    environment:
+      BLE_ADDRESS: "54:B7:E5:A2:CA:41"
+      MQTT_HOSTNAME: "192.168.1.10"
+      MQTT_USERNAME: "myuser"
+      MQTT_PASSWORD: "mypassword"
+    restart: unless-stopped
+```
+
+Then:
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+`restart: unless-stopped` plays the same role as the systemd restart above —
+the container comes back after a BLE drop.
+
 ## Configuration
 
 All configuration is via environment variables:
